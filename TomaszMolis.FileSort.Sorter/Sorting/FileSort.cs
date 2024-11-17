@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -25,17 +26,18 @@ namespace TomaszMolis.FileSort.Sorter.Sorting
                 CHUNK_SIZE = (int)Math.Log(inputFile.Length)* CHUNK_SIZE;        
                 Stopwatch splitting = new Stopwatch();
                 splitting.Start();
-                List<string> tempFiles = Split(inputFilePath);
+                List<string> tempFiles = await SplitAlphabeticaly(inputFilePath);
                 splitting.Stop();
                 Console.WriteLine("Splitted into {0} files", tempFiles.Count);
                 Console.WriteLine($"Splitting took {splitting.Elapsed}.");
                 Stopwatch sorting = new Stopwatch();
                 sorting.Start();
-                List<string> sortedFiles = SortFiles(tempFiles);
+                var sortedFiles = SortFiles(tempFiles);
                 sorting.Stop();
                 Console.WriteLine($"Sorting took {sorting.Elapsed}.");
                 Stopwatch merging = new Stopwatch();
-                await MergeChunksParallel(sortedFiles, outputFilePath);
+                merging.Start();
+                MergeFiles(sortedFiles, outputFilePath);
                 merging.Stop();
                 Console.WriteLine($"Merging took {merging.Elapsed}.");
             }
@@ -92,9 +94,68 @@ namespace TomaszMolis.FileSort.Sorter.Sorting
             return tempFiles;
         }
 
-        List<string> SortFiles(List<string> tempFiles)
+        private async Task<List<string>> SplitAlphabeticaly(string inputFile)
         {
-            List<string> sortedFiles = new List<string>();
+            string outputDirectory = "OutputFiles";
+            Directory.CreateDirectory(outputDirectory);
+            var fileContents = new ConcurrentDictionary<char, ConcurrentBag<string>>();
+            for (char letter = 'A'; letter <= 'Z'; letter++)
+            {
+                fileContents[letter] = new ConcurrentBag<string>();
+            }
+            
+            const int bufferSize = 8120; // Buffer size in bytes
+            using (var stream = new FileStream(inputFile, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, useAsync: true))
+            using (var reader = new StreamReader(stream))
+            {
+                while (!reader.EndOfStream)
+                {
+                    // Read a chunk of lines asynchronously
+                    var chunk = await ReadLinesChunkAsync(reader, 2000); // Adjust chunk size as needed
+                    Parallel.ForEach(chunk, line =>
+                    {
+                        if (line == null || string.IsNullOrWhiteSpace(line.Text))
+                            return;
+
+                        char firstChar = char.ToUpper(line.Text[0]);
+                        if (firstChar >= 'A' && firstChar <= 'Z')
+                        {
+                            fileContents[firstChar].Add(line.ToString());
+                        }
+                    });
+                }
+            }
+            Parallel.ForEach(fileContents.Keys, letter =>
+            {
+                string outputPath = Path.Combine(outputDirectory, $"{letter}.txt");
+                File.WriteAllLines(outputPath, fileContents[letter]);
+            });
+
+            var files = fileContents.Keys.Select(k => $"{outputDirectory}/{k}.txt").ToList();
+            var nonempty = files.Where(f => new FileInfo(f).Length > 0).ToList();
+            foreach (var toDelete in files.Where(f => new FileInfo(f).Length ==0))
+            {
+                File.Delete(toDelete);
+            }
+            
+            return nonempty;
+        }
+        
+        private static async Task<LineItem[]> ReadLinesChunkAsync(StreamReader reader, int chunkSize)
+        {
+            var lines = new LineItem[chunkSize];
+            int count = 0;
+
+            for (int i = 0; i < chunkSize && !reader.EndOfStream; i++)
+            {
+                lines[count++] = LineItem.Parse(await reader.ReadLineAsync());
+            }
+
+            return lines.Take(count).ToArray();
+        }
+        List<(char Letter, string Name)> SortFiles(List<string> tempFiles)
+        {
+            List<(char,string)> sortedFiles = new List<(char,string)>();
             List<Task> tasks = new List<Task>();
             foreach (var file in tempFiles)
             {
@@ -103,7 +164,7 @@ namespace TomaszMolis.FileSort.Sorter.Sorting
                     var lines = File.ReadAllLines(file).Select(LineItem.Parse).ToList();
                     var sortedLines = SortItems(lines);
                     string tempFile = Path.GetTempFileName();
-                    sortedFiles.Add(tempFile);
+                    sortedFiles.Add((char.ToUpper(lines[0].Text[0]), tempFile));
                     File.WriteAllLines(tempFile, sortedLines.Select(l => l.ToString()));
                 });
                 tasks.Add(sortTask);
@@ -205,123 +266,21 @@ namespace TomaszMolis.FileSort.Sorter.Sorting
             }
         }
 
-        static void MergeSortedFiles(List<string> tempFiles, string outputFile)
+        static void MergeFiles(List<(char Letter, string Name)> tempFiles, string outputFile)
         {
-            // Create a list of readers for each temporary file
-            List<StreamReader> readers = tempFiles.Select(file => new StreamReader(file)).ToList();
-            List<LineItem> currentLines = readers.Select(r => LineItem.Parse(r.ReadLine())).ToList();
-
-            using (StreamWriter writer = new StreamWriter(outputFile))
+            var ordered = tempFiles.OrderBy(f=>f.Letter).Select(x=>x.Name).ToList();
+            using (var outputStream = new FileStream(outputFile, FileMode.Create, FileAccess.Write))
             {
-                while (currentLines.Any(line => line != null))
+                foreach (string filePath in ordered)
                 {
-                    LineItem minLine = null;
-                    int minIndex = -1;
-
-                    for (int i = 0; i < currentLines.Count; i++)
+                    // Open the input file and copy its contents to the output file
+                    using (var inputStream = new FileStream(filePath, FileMode.Open, FileAccess.Read))
                     {
-                        if (currentLines[i] != null && (minLine == null || currentLines[i].CompareTo(minLine) < 0))
-                        {
-                            minLine = currentLines[i];
-                            minIndex = i;
-                        }
+                        inputStream.CopyTo(outputStream);
                     }
-
-                    // Write the smallest line to the output file
-                    writer.WriteLine(minLine.ToString());
-
-                    var nextLine = readers[minIndex].ReadLine();
-                    // Read the next line from the file that provided the smallest line
-                    currentLines[minIndex] = LineItem.Parse(nextLine);
                 }
             }
 
-            // Close all readers
-            foreach (var reader in readers)
-            {
-                reader.Close();
-            }
-
-            // Clean up temporary files
-            foreach (var file in tempFiles)
-            {
-                File.Delete(file);
-            }
-        }
-
-
-        private static async Task MergeChunksParallel(List<string> tempFiles, string outputFile)
-        {
-            int chunkCount = tempFiles.Count;
-            int parallelismDegree = Math.Min(Environment.ProcessorCount, chunkCount);
-
-            // Split files into groups for parallel processing
-            var chunks = SplitIntoGroups(tempFiles, parallelismDegree);
-
-            var tasks = new List<Task>();
-            List<string> outputFiles = new List<string>();
-
-            Parallel.ForEach(chunks, group =>
-            {
-                var tmpFile = Path.GetTempFileName();
-                outputFiles.Add(tmpFile);
-                MergeSortedFiles(group, tmpFile);
-            });           
-            MergeSortedFiles(outputFiles, outputFile);
-        }
-
-        // Helper method to merge a set of files in one group
-        private static void MergeSortedFilesInGroup(List<string> groupFiles, string outputFile)
-        {
-            List<StreamReader> readers = groupFiles.Select(file => new StreamReader(file)).ToList();
-            List<LineItem> currentLines = readers.Select(reader => LineItem.Parse(reader.ReadLine())).ToList();
-
-            using (var writer = new StreamWriter(outputFile, append: true)) // Append mode for merging
-            {
-                while (true)
-                {
-                    // Find the smallest line from the current set of lines
-                    LineItem minLine = null;
-                    int minIndex = -1;
-
-                    for (int i = 0; i < currentLines.Count; i++)
-                    {
-                        if (currentLines[i] != null && (minLine == null || currentLines[i].CompareTo(minLine) < 0))
-                        {
-                            minLine = currentLines[i];
-                            minIndex = i;
-                        }
-                    }
-
-                    if (minLine == null) break; // All lines in this group have been processed
-
-                    writer.WriteLine(minLine);
-
-                    // Read the next line from the corresponding reader
-                    currentLines[minIndex] = LineItem.Parse(readers[minIndex].ReadLine());
-                }
-            }
-
-            // Close all readers
-            foreach (var reader in readers)
-            {
-                reader.Close();
-            }
-        }
-
-        // Split the files into smaller groups for parallel processing
-        private static List<List<string>> SplitIntoGroups(List<string> files, int groupCount)
-        {
-            var result = new List<List<string>>();
-            int filesPerGroup = (int)Math.Ceiling((double)files.Count / groupCount);
-
-            for (int i = 0; i < filesPerGroup; i++)
-            {
-                var group = files.Skip(i * groupCount).Take(groupCount).ToList();
-                result.Add(group);
-            }
-
-            return result;
         }
     }
 }
