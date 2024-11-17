@@ -8,6 +8,6 @@ namespace TomaszMolis.FileSort.Sorter.Sorting
 {
     public interface ISorter
     {
-        TimeSpan Sort(string inputFilePath, string outputFilePath);
+        Task<TimeSpan> SortAsync(string inputFilePath, string outputFilePath);
     }
 }
