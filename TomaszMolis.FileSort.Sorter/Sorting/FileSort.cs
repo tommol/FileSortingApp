@@ -159,16 +159,29 @@ namespace TomaszMolis.FileSort.Sorter.Sorting
 
         async Task<List<(char Letter, string Name)>> SortFiles(List<string> tempFiles)
         {
+            List<(char Letter, string Name)> result = new List<(char Letter, string Name)>();
             List<(char,string)> sortedFiles = new List<(char,string)>();
-
-            await Parallel.ForEachAsync(tempFiles,
-                new ParallelOptions() {MaxDegreeOfParallelism = Environment.ProcessorCount},
-                async (tuple,token) =>
-                {
-                    var sortedFile = await SortFile(tuple);
-                    sortedFiles.Add(sortedFile);
-                });
-            return sortedFiles;
+            var ordered = tempFiles.OrderBy(f=>f).ToList();
+            var degreeOfParallelism = Environment.ProcessorCount;
+            var steps = (int)Math.Ceiling((1.0m*tempFiles.Count) / degreeOfParallelism);
+            Console.WriteLine($"Starting to sort in {steps} steps.");
+            for(int i=0; i<steps; i++)
+            {
+                var group = ordered.Skip(i*degreeOfParallelism).Take(degreeOfParallelism).ToList();
+                await Parallel.ForEachAsync(group,
+                    new ParallelOptions() {MaxDegreeOfParallelism = Environment.ProcessorCount},
+                    async (tuple,token) =>
+                    {
+                        var sortedFile = await SortFile(tuple);
+                        sortedFiles.Add(sortedFile);
+                    });
+                    // Trzeba zasynchronizować merge 
+                    var partialMerge = $"{outputDirectory}/{Path.GetRandomFileName()}";
+                    MergeFiles(sortedFiles, partialMerge);
+                    result.Add((sortedFiles[0].Item1, partialMerge));
+                    sortedFiles.Clear();
+            }
+            return result;
         }
 
         async Task<(char,string)> SortFile(string fileName)
