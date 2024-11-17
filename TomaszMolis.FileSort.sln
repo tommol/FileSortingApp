@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TomaszMolis.FileSort.Sorter", "TomaszMolis.FileSort.Sorter\TomaszMolis.FileSort.Sorter.csproj", "{8D6D6B57-3766-4B7E-BBE3-C353A87C2820}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TomaszMolis.FileSort.Generator", "TomaszMolis.FileSort.Generator\TomaszMolis.FileSort.Generator.csproj", "{646BAD16-A6B4-4741-B2C2-21A5D22F557B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{8D6D6B57-3766-4B7E-BBE3-C353A87C2820}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8D6D6B57-3766-4B7E-BBE3-C353A87C2820}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8D6D6B57-3766-4B7E-BBE3-C353A87C2820}.Release|Any CPU.Build.0 = Release|Any CPU
+		{646BAD16-A6B4-4741-B2C2-21A5D22F557B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{646BAD16-A6B4-4741-B2C2-21A5D22F557B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{646BAD16-A6B4-4741-B2C2-21A5D22F557B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{646BAD16-A6B4-4741-B2C2-21A5D22F557B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
