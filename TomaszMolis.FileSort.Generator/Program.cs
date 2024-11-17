@@ -10,7 +10,7 @@ if (args.Length == 0)
     Console.WriteLine("Please provide desired length of file in bytes.");
     return;
 }
-var validLength = int.TryParse(args[0], out int length);
+var validLength = long.TryParse(args[0], out long length);
 if (!validLength)
 {
     Console.WriteLine("Desired length must be an integer.");

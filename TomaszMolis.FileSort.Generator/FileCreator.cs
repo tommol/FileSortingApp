@@ -4,7 +4,7 @@ public sealed class FileCreator
 {
     private readonly Random random = new();
     
-    public async Task<string> Create(int lenght)
+    public async Task<string> Create(long lenght)
     {
         var outputPath = Path.GetRandomFileName();
         var dictionary = (await LoadDictionary()).ToArray();
