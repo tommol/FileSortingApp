@@ -12,7 +12,7 @@ namespace TomaszMolis.FileSort.Sorter.Sorting
     public class FileSort : ISorter
     {
         private int CHUNK_SIZE = 8000;
-
+        string outputDirectory = "OutputFiles";
         public async Task<TimeSpan> SortAsync(string inputFilePath, string outputFilePath)
         {
 
@@ -32,7 +32,7 @@ namespace TomaszMolis.FileSort.Sorter.Sorting
                 Console.WriteLine($"Splitting took {splitting.Elapsed}.");
                 Stopwatch sorting = new Stopwatch();
                 sorting.Start();
-                var sortedFiles = SortFiles(tempFiles);
+                var sortedFiles =await  SortFiles(tempFiles);
                 sorting.Stop();
                 Console.WriteLine($"Sorting took {sorting.Elapsed}.");
                 Stopwatch merging = new Stopwatch();
@@ -96,23 +96,23 @@ namespace TomaszMolis.FileSort.Sorter.Sorting
 
         private async Task<List<string>> SplitAlphabeticaly(string inputFile)
         {
-            string outputDirectory = "OutputFiles";
             Directory.CreateDirectory(outputDirectory);
-            var fileContents = new ConcurrentDictionary<char, ConcurrentBag<string>>();
+            var fileContents = new ConcurrentDictionary<char, StreamWriter>();
             for (char letter = 'A'; letter <= 'Z'; letter++)
             {
-                fileContents[letter] = new ConcurrentBag<string>();
+                var fileName = $"{outputDirectory}/{letter}.txt";
+                fileContents[letter] =new StreamWriter(new FileStream(fileName, FileMode.Create, FileAccess.Write));
             }
             
             const int bufferSize = 8120; // Buffer size in bytes
-            using (var stream = new FileStream(inputFile, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, useAsync: true))
+            await using (var stream = new FileStream(inputFile, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, useAsync: true))
             using (var reader = new StreamReader(stream))
             {
                 while (!reader.EndOfStream)
                 {
                     // Read a chunk of lines asynchronously
                     var chunk = await ReadLinesChunkAsync(reader, 2000); // Adjust chunk size as needed
-                    Parallel.ForEach(chunk, line =>
+                    Parallel.ForEach(chunk, new ParallelOptions(){ MaxDegreeOfParallelism = Environment.ProcessorCount},line =>
                     {
                         if (line == null || string.IsNullOrWhiteSpace(line.Text))
                             return;
@@ -120,16 +120,19 @@ namespace TomaszMolis.FileSort.Sorter.Sorting
                         char firstChar = char.ToUpper(line.Text[0]);
                         if (firstChar >= 'A' && firstChar <= 'Z')
                         {
-                            fileContents[firstChar].Add(line.ToString());
+                            lock (fileContents[firstChar])
+                            {
+                                fileContents[firstChar].WriteLine(line.ToString());
+                            }
                         }
                     });
                 }
             }
-            Parallel.ForEach(fileContents.Keys, letter =>
+
+            foreach (var file in fileContents.Values)
             {
-                string outputPath = Path.Combine(outputDirectory, $"{letter}.txt");
-                File.WriteAllLines(outputPath, fileContents[letter]);
-            });
+                file.Close();
+            }
 
             var files = fileContents.Keys.Select(k => $"{outputDirectory}/{k}.txt").ToList();
             var nonempty = files.Where(f => new FileInfo(f).Length > 0).ToList();
@@ -153,29 +156,30 @@ namespace TomaszMolis.FileSort.Sorter.Sorting
 
             return lines.Take(count).ToArray();
         }
-        List<(char Letter, string Name)> SortFiles(List<string> tempFiles)
+
+        async Task<List<(char Letter, string Name)>> SortFiles(List<string> tempFiles)
         {
             List<(char,string)> sortedFiles = new List<(char,string)>();
-            List<Task> tasks = new List<Task>();
-            foreach (var file in tempFiles)
-            {
-                var sortTask = new Task(() =>
+
+            await Parallel.ForEachAsync(tempFiles,
+                new ParallelOptions() {MaxDegreeOfParallelism = Environment.ProcessorCount},
+                async (tuple,token) =>
                 {
-                    var lines = File.ReadAllLines(file).Select(LineItem.Parse).ToList();
-                    var sortedLines = SortItems(lines);
-                    string tempFile = Path.GetTempFileName();
-                    sortedFiles.Add((char.ToUpper(lines[0].Text[0]), tempFile));
-                    File.WriteAllLines(tempFile, sortedLines.Select(l => l.ToString()));
+                    var sortedFile = await SortFile(tuple);
+                    sortedFiles.Add(sortedFile);
                 });
-                tasks.Add(sortTask);
-                sortTask.Start();
-            }
-            Task.WaitAll(tasks.ToArray());
-            foreach (var file in tempFiles)
-            {
-                File.Delete(file);
-            }
             return sortedFiles;
+        }
+
+        async Task<(char,string)> SortFile(string fileName)
+        {
+            var lines =(await File.ReadAllLinesAsync(fileName)).Select(LineItem.Parse).ToList();
+            var letter = lines[0].Text[0];
+            var sortedLines = SortItems(lines);
+            string tempFile = $"{outputDirectory}/{Path.GetRandomFileName()}";
+            await File.WriteAllLinesAsync(tempFile, sortedLines.Select(l => l.ToString()));
+            File.Delete(fileName);
+            return (letter,tempFile);
         }
 
         static void WriteSplitted(List<string> chunk, string tempFile)
@@ -278,9 +282,9 @@ namespace TomaszMolis.FileSort.Sorter.Sorting
                     {
                         inputStream.CopyTo(outputStream);
                     }
+                    File.Delete(filePath);
                 }
             }
-
         }
     }
 }
